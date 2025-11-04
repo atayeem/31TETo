@@ -11,6 +11,22 @@
 #include <filesystem>
 #include "cJSON.h"
 
+/*
+TODO (in order of importance):
+- Add subprocess execution, probably using std::system()
+- Finish configuration logic
+- Figure out how to do clean pitch shifting (possibly by changing the fundamental note)
+  (this would be based on the average of the whole sample, the note can not change during)
+  (a sample.)
+- Streamline error printing
+- Add support for .scl files
+- Add support for .tun files
+
+Part 2:
+- Parse .ustx format.
+- Figure out how to smoothly interpolate notes.
+*/
+
 float midi_to_cents_12edo(int midi_note) {
     return 100 * (midi_note - 69);
 }
