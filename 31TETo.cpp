@@ -10,6 +10,7 @@
 #include <vector>
 #include <filesystem>
 #include "cJSON.h"
+#include <unistd.h>
 
 /*
 TODO (in order of importance):
@@ -102,11 +103,13 @@ private:
         return Scale[degree] + octave * equave;
     }
 
-    /* I don't know how this works. */
     void generate_mapping() {
         int ref = note_to_midi(ReferencePitchName);
         for (int i = 0; i < 132; i++) {
-            mapping[i] = 1200 * log2(ReferencePitch/440.0) + 100 * (69 - ref) + scl(i) - midi_to_cents_12edo(i);
+            mapping[i] = 1200 * log2(ReferencePitch/440.0) // Adjust reference pitch from 440hz
+                       + 100 * (69 - ref)                     // Adjust reference note from A (69)
+                       + scl(i)                             // Get actual scale degree from tuning
+                       - midi_to_cents_12edo(i);    // Subtract actual value of pitch.
         }
     }
 
@@ -117,8 +120,8 @@ private:
         // 31-edo chromatic with # meaning +2 (meantone)
         float steps[11] = {2, 5, 7, 10, 13, 15, 18, 20, 23, 25, 28};
 
-        std::for_each_n(steps, sizeof(steps) / sizeof(float), [](float &n){n *= 1200.0/31;});
-        std::copy_n(steps, 12, Scale);
+        std::for_each_n(steps, sizeof(steps) / sizeof(float), [&](float &n){Scale.push_back(1200.0/31 * n);});
+        generate_mapping();
     }
 public:
     Config(std::filesystem::path config_path) {
@@ -182,11 +185,29 @@ public:
                             std::cout << "[31TETo] element of Scale array isn't a number.\n";
                         }
                     }
+                    generate_mapping();
+
                 } else if (cJSON_IsString(focus) && (focus->valuestring != nullptr)) {
                     std::cout << "[31TETo] Scale is a string: Opening file to get scale not yet supported.\n";
+                    defconfig();
                 } else {
                     std::cout << "[31TETo] Scale is not a string or array. Continuing with defconfig.\n";
                     defconfig();
+                }
+
+                focus = cJSON_GetObjectItemCaseSensitive(data, "ExecPath");
+                if (cJSON_IsArray(focus)) {
+                    const cJSON* elt;
+                    cJSON_ArrayForEach(elt, focus) {
+                        if (cJSON_IsString(elt) && (elt->valuestring != nullptr)) {
+                            ExecPath.push_back(elt->valuestring);
+                        } else {
+                            std::cout << "[31TETo] an element of ExecPath is not a string.\n";
+                        }
+                    }
+                } else {
+                    std::cout << "[31TETo] ExecPath isn't an array. Please fix " << config_path << ". Not recoverable. Exiting.\n";
+                    std::abort();
                 }
 
                 cJSON_Delete(data);
@@ -239,7 +260,6 @@ static std::vector<int16_t> pitch_string_to_cents(const std::string& in) {
     int reps = 0;
     int state = 1;
     uint16_t val;
-    int16_t nval;
     int i = 0;
     while (in[i]) {
         switch (state) {
@@ -297,7 +317,7 @@ static std::string cents_to_pitch_string(const std::vector<int16_t>& in) {
 
     auto last_pair = pairs[0];
 
-    for (int i = 1; i < pairs.size(); i++) {
+    for (size_t i = 1; i < pairs.size(); i++) {
         auto pair = pairs[i];
 
         if (pair == last_pair) {
@@ -322,6 +342,10 @@ static std::string cents_to_pitch_string(const std::vector<int16_t>& in) {
     return out_str;
 }
 
+static float detune(const Config &cfg, const std::string& note_name, float cents) {
+    return cents + cfg.mapping[note_to_midi(note_name)];
+}
+
 int main(int argc, char *argv[]) {
 
     if (argc == 2) {
@@ -337,10 +361,37 @@ int main(int argc, char *argv[]) {
     std::filesystem::path config_path = argv[0];
     config_path = config_path.parent_path() / "31config.txt";
 
-    Config cfg(config_path);
+    Config cfg("/home/atayeem/Programming/atayeem/31TETo/example.json");
 
-    std::vector<int16_t> pitchbend = pitch_string_to_cents(argv[13]);
+    std::vector<int16_t> pitchbend_i = pitch_string_to_cents(argv[13]);
 
+    std::vector<float> pitchbend;
+    for (const auto i: pitchbend_i)
+        pitchbend.push_back(detune(cfg, argv[3], static_cast<float>(i)));
+   
+    pitchbend_i.clear();
 
-    return 0;
+    for (const auto f: pitchbend)
+        pitchbend_i.push_back(static_cast<int16_t>(f));
+    
+    std::vector<char *> cmd;
+    
+    // Put the executable name in.
+    for (const auto& arg: cfg.ExecPath) {
+        cmd.push_back(const_cast<char *>(arg.c_str()));
+    }
+
+    // Put the rest of the arguments
+    for (int i = 1; i < argc - 1; i++) {
+        cmd.push_back(argv[i]);
+    }
+
+    // Finally, put the pitch bend and null terminator
+
+    auto new_pitch_string  = cents_to_pitch_string(pitchbend_i);
+    std::cout << "[OLD] " << argv[13] << "\n";
+    std::cout << "[NEW] " << new_pitch_string << "\n";
+    cmd.push_back(const_cast<char *>(new_pitch_string.c_str()));
+    cmd.push_back(nullptr);
+    execvp(cfg.ExecPath[0].c_str(), cmd.data());
 }

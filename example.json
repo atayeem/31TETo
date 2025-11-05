@@ -1,6 +1,7 @@
 {
     "StepSize": 1.03715504445,
-    "ReferencePitch": 450.0,
+    "ReferencePitch": 440.0,
     "ReferencePitchName": "A",
-    "Scale": [100, 200, 300, 350, 500, 600, 700, 800, 850, 1000, 1050, 1200]
+    "Scale": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200],
+    "ExecPath": ["wine", "/home/atayeem/OpenUtau/Resamplers/moresampler.exe"]
 }
