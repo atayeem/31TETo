@@ -12,6 +12,19 @@
 #include "cJSON.h"
 #include <unistd.h>
 
+#ifdef _WIN32
+#include <process.h>
+#endif
+
+static const char* const default_json = 
+"{\n"
+"    \"StepSize\": 1.03715504445,\n"
+"    \"ReferencePitch\": 440.0,\n"
+"    \"ReferencePitchName\": \"A\",\n"
+"    \"Scale\": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200],\n"
+"    \"ExecPath\": [\"wine\", \"/home/atayeem/OpenUtau/Resamplers/moresampler.exe\"]\n"
+"}\n";
+
 /*
 TODO (in order of importance):
 - Add subprocess execution, probably using std::system()
@@ -32,7 +45,6 @@ float midi_to_cents_12edo(int midi_note) {
     return 100 * (midi_note - 69);
 }
 
-// This the kind of code they would write for the PDP-11
 int note_to_midi(std::string note) {
     const char *s = note.c_str();
     int n, octv, sgn;
@@ -95,21 +107,21 @@ struct Config {
 private:
     /* Calculate scale degree in cents */
     float scl(int n) {
-        int scale_steps = Scale.size() - 1;
+        int scale_steps = Scale.size();
         int octave = n / scale_steps;
         int degree = n % scale_steps;
         float equave = Scale.back();
 
-        return Scale[degree] + octave * equave;
+        return Scale[degree + octave * equave];
     }
 
     void generate_mapping() {
         int ref = note_to_midi(ReferencePitchName);
         for (int i = 0; i < 132; i++) {
             mapping[i] = 1200 * log2(ReferencePitch/440.0) // Adjust reference pitch from 440hz
-                       + 100 * (69 - ref)                     // Adjust reference note from A (69)
-                       + scl(i)                             // Get actual scale degree from tuning
-                       - midi_to_cents_12edo(i);    // Subtract actual value of pitch.
+                       + 100 * (69 - ref)                  // Adjust reference note from A (69)
+                       + scl(i)                            // Get actual scale degree from tuning
+                       - midi_to_cents_12edo(i);           // Subtract actual value of pitch.
         }
     }
 
@@ -120,7 +132,7 @@ private:
         // 31-edo chromatic with # meaning +2 (meantone)
         float steps[11] = {2, 5, 7, 10, 13, 15, 18, 20, 23, 25, 28};
 
-        std::for_each_n(steps, sizeof(steps) / sizeof(float), [&](float &n){Scale.push_back(1200.0/31 * n);});
+        std::for_each_n(steps, sizeof(steps) / sizeof(float), [&](float n){Scale.push_back(1200.0/31 * n);});
         generate_mapping();
     }
 public:
@@ -130,9 +142,10 @@ public:
             std::ofstream config_file(config_path);
             if (!config_file) {
                 std::cout << "[31TETo] JSON config could not be created at " << config_path << "\n";
-                
+                config_file <<
             } else {
                 std::cout << "[31TETo] Created new config file at " << config_path << "\n";
+                config_file << default_json;
                 config_file.close();
             }
             std::cout << "[31TETo] Continuing with defconfig\n";
@@ -219,17 +232,21 @@ public:
     }
 };
 
-static void usage(const char *name) {
+static void うさげ(const char *name, const char *config_path) {
     printf(
         "%s in_file out_file pitch velocity flags offset length consonant"
         " cutoff volume modulation tempo pitchbend\n\n"
-        "Config file:\n"
-        "   "
+        "Config file (%s) :\n"
+        "    StepSize: float: the size of each step of Z in cents (default 1200/31)\n"
+        "    ReferencePitch: float: The reference pitch (default 440.0hz)\n"
+        "    ReferencePitchName: string: The specific note that is tuned to the reference pitch (default \"A4\")\n"
+        "    Scale: array[float] or string: The list of intervals in the scale relative to the root in cents, excluding the root.\n"
+        "           or the filename of the tuning file used (not supported yet). (default 12-note subset of 31edo)\n"
+        "    ExecPath: array[string]: Command line to execute resampler (required) (example: [\"wine\", \"~/bin/resampler.exe\"])\n\n"
         "Flags:\n"
         "Z:  (default 0) (no limits) change pitch by integer number of steps of size StepSize.\n"
-        "     Z flag will not be passed to resampler. If this is a problem, please let me know.\n"
-        
-        , name
+        "    Z flag will be passed to resampler. If this is a problem, please let me know.\n"
+        , name, config_path
     );
 }
 
@@ -348,20 +365,22 @@ static float detune(const Config &cfg, const std::string& note_name, float cents
 
 int main(int argc, char *argv[]) {
 
+    std::filesystem::path config_path = argv[0];
+    config_path = config_path.parent_path() / "31config.txt";
+  
     if (argc == 2) {
-        usage(argv[0]);
+        auto s = config_path.string();
+        うさげ(argv[0], s.c_str());
         return 1;
     }
 
     if (argc != 14) {
-        fprintf(stderr, "[31TETo] Incorrect number of command line arguments given. Expected 14, got %d", argc);
+        std::cout << "[31TETo] Incorrect number of command line arguments given. Expected 14, got " << argc;
         return 1;
     }
 
-    std::filesystem::path config_path = argv[0];
-    config_path = config_path.parent_path() / "31config.txt";
-
     Config cfg("/home/atayeem/Programming/atayeem/31TETo/example.json");
+//  Config cfg(config_path);
 
     std::vector<int16_t> pitchbend_i = pitch_string_to_cents(argv[13]);
 
@@ -387,11 +406,13 @@ int main(int argc, char *argv[]) {
     }
 
     // Finally, put the pitch bend and null terminator
-
     auto new_pitch_string  = cents_to_pitch_string(pitchbend_i);
-    std::cout << "[OLD] " << argv[13] << "\n";
-    std::cout << "[NEW] " << new_pitch_string << "\n";
     cmd.push_back(const_cast<char *>(new_pitch_string.c_str()));
     cmd.push_back(nullptr);
+
+    #ifdef _WIN32
+    _spawnvp(_P_OVERLAY, cfg.ExecPath[0].c_str(), cmd.data());    
+    #else
     execvp(cfg.ExecPath[0].c_str(), cmd.data());
+    #endif
 }
