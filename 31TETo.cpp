@@ -5,20 +5,21 @@
 #include <fstream>
 #include <math.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <string>
 #include <vector>
 #include <filesystem>
 #include "cJSON.h"
-#include <unistd.h>
+#include <limits.h>
 
 #ifdef _WIN32
 #include <process.h>
+#else
+#include <unistd.h>
 #endif
 
 static const char* const default_json = 
 "{\n"
-"    \"StepSize\": 1.03715504445,\n"
+"    \"StepSize\": 38.70967741935484,\n"
 "    \"ReferencePitch\": 440.0,\n"
 "    \"ReferencePitchName\": \"A\",\n"
 "    \"Scale\": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200],\n"
@@ -41,11 +42,11 @@ Part 2:
 - Figure out how to smoothly interpolate notes.
 */
 
-float midi_to_cents_12edo(int midi_note) {
+static float midi_to_cents_12edo(int midi_note) {
     return 100 * (midi_note - 69);
 }
 
-int note_to_midi(std::string note) {
+static int note_to_midi(std::string note) {
     const char *s = note.c_str();
     int n, octv, sgn;
     switch (s[0]) {
@@ -83,8 +84,17 @@ int note_to_midi(std::string note) {
         sgn = 1;
         octv = s[1] - '0';
     }
-
     return (sgn * octv + 1) * 12 + n;
+}
+
+std::string midi_to_note(int midi) {
+    std::string out;
+    std::array<const char*, 12> names = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+
+    out += names[midi % 12];
+    
+    out += std::to_string(midi / 12);
+    return out;
 }
 
 struct Config {
@@ -112,16 +122,16 @@ private:
         int degree = n % scale_steps;
         float equave = Scale.back();
 
-        return Scale[degree + octave * equave];
+        return Scale[degree] + (octave + 1) * equave;
     }
 
     void generate_mapping() {
         int ref = note_to_midi(ReferencePitchName);
         for (int i = 0; i < 132; i++) {
-            mapping[i] = 1200 * log2(ReferencePitch/440.0) // Adjust reference pitch from 440hz
-                       + 100 * (69 - ref)                  // Adjust reference note from A (69)
-                       + scl(i)                            // Get actual scale degree from tuning
-                       - midi_to_cents_12edo(i);           // Subtract actual value of pitch.
+            mapping[i] =
+                1200 * log2(ReferencePitch / 440.0)   // reference pitch shift
+              + scl(i - ref)                          // scale offset from reference note
+              - 100 * (i - 69);                       // remove equal temperament baseline
         }
     }
 
@@ -142,7 +152,6 @@ public:
             std::ofstream config_file(config_path);
             if (!config_file) {
                 std::cout << "[31TETo] JSON config could not be created at " << config_path << "\n";
-                config_file <<
             } else {
                 std::cout << "[31TETo] Created new config file at " << config_path << "\n";
                 config_file << default_json;
@@ -280,15 +289,16 @@ static std::vector<int16_t> pitch_string_to_cents(const std::string& in) {
     int i = 0;
     while (in[i]) {
         switch (state) {
+        // The 0th letter of the pair.
         case 1:
             val = b64_to_i[in[i]];
-
             if (in[i] == '#')
                 state = 3;
             else
                 state = 2;
             break;
-            
+        
+        // The 1st letter of the pair.
         case 2:
             val = (val << 6) + b64_to_i[in[i]];
             out.push_back((int16_t)(val << 4) >> 4);
@@ -296,12 +306,13 @@ static std::vector<int16_t> pitch_string_to_cents(const std::string& in) {
             state = 1;
             break;
         
+        // Count up the repetitions until we hit another `#`.
         case 3:
             if (in[i] == '#') {
                 state = 1;
                 for (int i = 0; i < reps - 1; i++)
                     out.push_back(out.back());
-                
+                reps = 0;
             }
             else {
                 reps = reps * 10 + in[i] - '0';
@@ -341,7 +352,7 @@ static std::string cents_to_pitch_string(const std::vector<int16_t>& in) {
             cnt++;
         } 
         else {
-            if (cnt < 6)
+            if (cnt < 2)
                 for (int _=0; _<cnt;_++) out_str += last_pair;
             else
                 out_str += last_pair + "#" + std::to_string(cnt) + "#";
@@ -351,7 +362,7 @@ static std::string cents_to_pitch_string(const std::vector<int16_t>& in) {
         }
     }
 
-    if (cnt < 6)
+    if (cnt < 2)
         for (int _=0; _<cnt;_++) out_str += last_pair;
     else
         out_str += last_pair + "#" + std::to_string(cnt) + "#";
@@ -379,6 +390,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    #ifdef DEBUG
+    std::cout << "set +H; valgrind ";
+    for (int i = 0; i < argc - 2; i++) {
+        std::cout << argv[i] << " ";
+    }
+    std::cout << "'" << argv[12] << "' '" << argv[13] << "'" << std::endl;
+    #endif
+
     Config cfg("/home/atayeem/Programming/atayeem/31TETo/example.json");
 //  Config cfg(config_path);
 
@@ -387,11 +406,23 @@ int main(int argc, char *argv[]) {
     std::vector<float> pitchbend;
     for (const auto i: pitchbend_i)
         pitchbend.push_back(detune(cfg, argv[3], static_cast<float>(i)));
-   
+
     pitchbend_i.clear();
 
-    for (const auto f: pitchbend)
+    #ifdef DEBUG
+    for (int i = 0; i < 132; i++) {
+        std::cout << midi_to_note(i) << ": " << cfg.mapping[i] << "\n";
+    }
+    #endif
+
+    for (const auto f: pitchbend) {
+        if (f > SHRT_MAX)
+            std::cout << "Frequency went above maximum!\n";
+        if (f < SHRT_MIN)
+            std::cout << "Frequency went below minimum!\n";
+
         pitchbend_i.push_back(static_cast<int16_t>(f));
+    }
     
     std::vector<char *> cmd;
     
@@ -407,6 +438,10 @@ int main(int argc, char *argv[]) {
 
     // Finally, put the pitch bend and null terminator
     auto new_pitch_string  = cents_to_pitch_string(pitchbend_i);
+
+    std::cout << "OLD " << argv[13] << std::endl;
+    std::cout << "NEW " << new_pitch_string << std::endl;
+
     cmd.push_back(const_cast<char *>(new_pitch_string.c_str()));
     cmd.push_back(nullptr);
 

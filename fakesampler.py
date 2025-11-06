@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+RESAMPLER = ["wine", "/home/atayeem/.local/share/OpenUtau/Resamplers/moresampler.exe"]
+
 import sys, subprocess
 
 b64 = {
@@ -20,7 +23,6 @@ def _init_b64():
     
     global anti_b64
     anti_b64 = {value: key for key, value in b64.items()}
-
 
 
 def pitch_string_to_cents(s: str) -> list[int]:
@@ -114,7 +116,6 @@ def floats_to_ints(x: list[float]):
     return out
 
 # To preserve the meantone property that C# < Db, sharp (#) corresponds to going up by 2\32.
-# Otherwise, this is mapped to LLSLLLS, where L=5 and S=3.
 map_31: dict[str, float] = {
     "C": 0,
     "C#": 2,
@@ -130,18 +131,18 @@ map_31: dict[str, float] = {
     "B": 28
 }
 
-# ASSUMPTION: 31EDO
+# assumption: 31EDO
 for i, (key, value) in enumerate(map_31.items()):
     l31 = 1200 / 31
     map_31[key] = l31 * value - 100 * i
 
-# ASSUMPTION: 31EDO
+# assumption: 31EDO
 def note_string_to_detune_amount(s: str) -> float:
     note = s[:-1]
     return map_31[note]
 
-# Remove only the T flag, get the value of it, and reconstruct the flags string without it.
-# ASSUMPTION: 31EDO
+# Remove only the Z flag, get the value of it, and reconstruct the flags string without it.
+# assumption: 31EDO
 def flags_to_new_flags_and_detune(flags: str) -> tuple[str, float]:
     flags_dict: dict[str, int] = {}
     sgn = 1
@@ -159,9 +160,9 @@ def flags_to_new_flags_and_detune(flags: str) -> tuple[str, float]:
             
             flags_dict[last_c] = flags_dict[last_c] * 10 + int(c)
     
-    if "T" in flags_dict:
-        out_f = sgn * (1200 / 31) * flags_dict["T"]
-        flags_dict.pop("T")
+    if "Z" in flags_dict:
+        out_f = sgn * (1200 / 31) * flags_dict["Z"]
+        flags_dict.pop("Z")
     else:
         out_f = 0.0
     
@@ -176,7 +177,7 @@ def flags_to_new_flags_and_detune(flags: str) -> tuple[str, float]:
 # resampler in_file out_file pitch velocity [flags] [offset] [length] [consonant] [cutoff] [volume] [modulation] [tempo] [pitchbend]
 def main(argc: int, argv: list[str]):
     _init_b64()
-    resampler = ["wine", "/home/atayeem/.local/share/OpenUtau/Resamplers/moresampler.exe"]
+    
     if argc != 14:
         raise ValueError(f"Wrong number of arguments given ({argc}, rather than 14).\nInvocation: " + " ".join(argv))
     
@@ -186,7 +187,7 @@ def main(argc: int, argv: list[str]):
     new_flags, flag_detune = flags_to_new_flags_and_detune(argv[5])
     pitchbend = cents_to_pitch_string(floats_to_ints([p + detune + flag_detune for p in pitchbend]))
 
-    new_argv = resampler + argv[1:5] + [new_flags] + argv[6:13] + [pitchbend]
+    new_argv = RESAMPLER + argv[1:5] + [new_flags] + argv[6:13] + [pitchbend]
     subprocess.run(new_argv)
 
 if __name__ == "__main__":
