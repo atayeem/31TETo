@@ -1,8 +1,11 @@
-#!/usr/bin/env python3
+import sys, subprocess, os
 
-RESAMPLER = ["wine", "/home/atayeem/.local/share/OpenUtau/Resamplers/moresampler.exe"]
+WORKING_DIR = os.path.dirname(sys.argv[0])
 
-import sys, subprocess
+with open(os.path.join(WORKING_DIR, "fakesampler_exec.txt"), "r") as f:
+    RESAMPLER = f.read().split()
+
+RESAMPLER[0] = os.path.join(WORKING_DIR, RESAMPLER[0])
 
 b64 = {
     "+": 62,
