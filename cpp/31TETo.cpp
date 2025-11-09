@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-#include "cJSON.h"
 #include <limits.h>
 
 #ifdef _WIN32
@@ -16,35 +15,6 @@
 #else
 #include <unistd.h>
 #endif
-
-static const char* const default_json = 
-"{\n"
-"    \"StepSize\": 38.70967741935484,\n"
-"    \"ReferencePitch\": 440.0,\n"
-"    \"ReferencePitchName\": \"A\",\n"
-"    \"Scale\": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200],\n"
-"    \"ExecPath\": [\"wine\", \"/home/atayeem/OpenUtau/Resamplers/moresampler.exe\"]\n"
-"}\n";
-
-/*
-TODO (in order of importance):
-- Add subprocess execution, probably using std::system()
-- Finish configuration logic
-- Figure out how to do clean pitch shifting (possibly by changing the fundamental note)
-  (this would be based on the average of the whole sample, the note can not change during)
-  (a sample.)
-- Streamline error printing
-- Add support for .scl files
-- Add support for .tun files
-
-Part 2:
-- Parse .ustx format.
-- Figure out how to smoothly interpolate notes.
-*/
-
-static float midi_to_cents_12edo(int midi_note) {
-    return 100 * (midi_note - 69);
-}
 
 static int note_to_midi(std::string note) {
     const char *s = note.c_str();
@@ -147,97 +117,6 @@ private:
     }
 public:
     Config(std::filesystem::path config_path) {
-
-        if (!std::filesystem::exists(config_path)) {
-            std::ofstream config_file(config_path);
-            if (!config_file) {
-                std::cout << "[31TETo] JSON config could not be created at " << config_path << "\n";
-            } else {
-                std::cout << "[31TETo] Created new config file at " << config_path << "\n";
-                config_file << default_json;
-                config_file.close();
-            }
-            std::cout << "[31TETo] Continuing with defconfig\n";
-            defconfig();
-
-        } else {
-            std::ifstream config_file(config_path);
-            std::string contents(std::istreambuf_iterator<char>(config_file), {});
-
-            cJSON* data = cJSON_Parse(contents.c_str());
-
-            if (!data) {
-                std::cout << "[31TETo] JSON config at " << config_path << " is malformed: " << cJSON_GetErrorPtr() << "\n";
-                std::cout << "[31TETo] Continuing with defconfig.\n";
-                defconfig();
-            }
-
-            else {
-                const cJSON* focus = cJSON_GetObjectItemCaseSensitive(data, "StepSize");
-                if (cJSON_IsNumber(focus)) {
-                    StepSize = focus->valuedouble;
-                } else {
-                    std::cout << "[31TETo] StepSize isn't a number.\n";
-                    StepSize = pow(2, 1/31);
-                }
-
-                focus = cJSON_GetObjectItemCaseSensitive(data, "ReferencePitch");
-                if (cJSON_IsNumber(focus)) {
-                    ReferencePitch = focus->valuedouble;
-                } else {
-                    std::cout << "[31TETo] ReferencePitch isn't a number.\n";
-                    ReferencePitch = 440.0;
-                }
-
-                focus = cJSON_GetObjectItemCaseSensitive(data, "ReferencePitchName");
-                if (cJSON_IsString(focus) && (focus->valuestring != nullptr) ) {
-                    ReferencePitchName = cJSON_GetStringValue(focus);
-                } else {
-                    std::cout << "[31TETo] ReferencePitchName isn't a string.\n";
-                    ReferencePitchName = "A";
-                }
-
-                focus = cJSON_GetObjectItemCaseSensitive(data, "Scale");
-                if (cJSON_IsArray(focus)) {
-                    const cJSON* degree;
-                    cJSON_ArrayForEach(degree, focus) {
-                        if (cJSON_IsNumber(degree)) {
-                            Scale.push_back(degree->valuedouble);
-                        } else {
-                            std::cout << "[31TETo] element of Scale array isn't a number.\n";
-                        }
-                    }
-                    generate_mapping();
-
-                } else if (cJSON_IsString(focus) && (focus->valuestring != nullptr)) {
-                    std::cout << "[31TETo] Scale is a string: Opening file to get scale not yet supported.\n";
-                    defconfig();
-                } else {
-                    std::cout << "[31TETo] Scale is not a string or array. Continuing with defconfig.\n";
-                    defconfig();
-                }
-
-                focus = cJSON_GetObjectItemCaseSensitive(data, "ExecPath");
-                if (cJSON_IsArray(focus)) {
-                    const cJSON* elt;
-                    cJSON_ArrayForEach(elt, focus) {
-                        if (cJSON_IsString(elt) && (elt->valuestring != nullptr)) {
-                            ExecPath.push_back(elt->valuestring);
-                        } else {
-                            std::cout << "[31TETo] an element of ExecPath is not a string.\n";
-                        }
-                    }
-                } else {
-                    std::cout << "[31TETo] ExecPath isn't an array. Please fix " << config_path << ". Not recoverable. Exiting.\n";
-                    std::abort();
-                }
-
-                cJSON_Delete(data);
-            }
-            config_file.close();
-        }
-
-        generate_mapping();
     }
 };
 
