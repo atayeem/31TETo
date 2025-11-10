@@ -3,20 +3,31 @@
 #include <cstdint>
 #include <iostream>
 #include <fstream>
+#include <iterator>
 #include <math.h>
 #include <stdio.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <filesystem>
 #include <limits.h>
-
+#include <ctype.h>
 #ifdef _WIN32
 #include <process.h>
 #else
 #include <unistd.h>
 #endif
 
-static int note_to_midi(std::string note) {
+using Path = std::filesystem::path;
+using std::string;
+using std::string_view;
+using std::unordered_map;
+
+static bool ends_with(string_view str, string_view suffix) {
+    return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix);
+}
+
+static int note_to_midi(string note) {
     const char *s = note.c_str();
     int n, octv, sgn;
     switch (s[0]) {
@@ -57,8 +68,8 @@ static int note_to_midi(std::string note) {
     return (sgn * octv + 1) * 12 + n;
 }
 
-std::string midi_to_note(int midi) {
-    std::string out;
+static string midi_to_note(int midi) {
+    string out;
     std::array<const char*, 12> names = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
     out += names[midi % 12];
@@ -67,74 +78,174 @@ std::string midi_to_note(int midi) {
     return out;
 }
 
-struct Config {
-    /* The cent difference between each note from C-1 to B9 and its detuned version. */
-    std::array<float, 132> mapping;
-
-    /* The scale itself in kind of scl-style, where it does not include the first note, just all */
-    /* the cent differences between each note and the first one. Does not necessarily have 12 notes. */
-    std::vector<float> Scale;
-
-    /* How much the `Z` integer flag changes the note. */
-    float StepSize;
-
-    /* For example, standard tuning is ReferencePitch=440.0 */
-    float ReferencePitch;
-    std::string ReferencePitchName;
-
-    std::vector<std::string> ExecPath;
-
+struct Scale {
 private:
-    /* Calculate scale degree in cents */
-    float scl(int n) {
-        int scale_steps = Scale.size();
-        int octave = n / scale_steps;
-        int degree = n % scale_steps;
-        float equave = Scale.back();
+    bool using_tun = false;
+    bool using_scl = false;
 
-        return Scale[degree] + (octave + 1) * equave;
-    }
+    std::array<float, 128> tun_notes;
+    std::vector<float> scl_notes;
 
-    void generate_mapping() {
-        int ref = note_to_midi(ReferencePitchName);
-        for (int i = 0; i < 132; i++) {
-            mapping[i] =
-                1200 * log2(ReferencePitch / 440.0)   // reference pitch shift
-              + scl(i - ref)                          // scale offset from reference note
-              - 100 * (i - 69);                       // remove equal temperament baseline
+    void parse_tun(Path fname) {
+        std::ifstream f(fname);
+        if (!f) {
+            std::cout << "Failed to open tun file " << fname << std::endl;
+            return;
+        }
+
+        std::string s;
+        using_tun = true;
+
+        while (std::getline(f, s), s != "[Exact tuning]");
+        
+        while (std::getline(f, s)) {
+            std::istringstream iss(s);
+
+            std::string label;
+            int index;
+            char equals;
+            float val;
+
+            if (iss >> label >> index >> equals >> val) {
+                tun_notes[index] = val;
+            } else {
+                std::cout << "Could not parse this line of tun file: " << s << std::endl;
+            }
         }
     }
 
-    void defconfig() {
-        ReferencePitch = 440.0;
-        StepSize = 1200.0 / 31.0;
-        
-        // 31-edo chromatic with # meaning +2 (meantone)
-        float steps[11] = {2, 5, 7, 10, 13, 15, 18, 20, 23, 25, 28};
+    void parse_scl(Path fname) {
+        std::ifstream f(fname);
+        if (!f) {
+            std::cout << "Failed to open scl file " << fname << std::endl;
+            return;
+        }
 
-        std::for_each_n(steps, sizeof(steps) / sizeof(float), [&](float n){Scale.push_back(1200.0/31 * n);});
-        generate_mapping();
+        using_scl = true;
+
+        string line;
+        std::vector<string> lines;
+
+        while (std::getline(f, line)) {
+            if (line[0] == '!')
+                continue;
+
+            lines.push_back(line);
+        }
+
+        // lines[0] is ignored.
+        int scale_size = std::stoi(lines[1]);
+        
+        std::for_each(lines.begin() + 2, lines.end(), [](string& s){
+            int i = 0;
+            for (char c: s) {
+                
+                i++;
+            }
+        });
     }
+
 public:
-    Config(std::filesystem::path config_path) {
+    Scale(Path scale_path) {
+        if (ends_with(scale_path.string(), ".tun")) {
+
+        }
+    }
+};
+
+class Config {
+public:
+    unordered_map<int, string> executables;
+    unordered_map<int, string> tunings;
+
+    Config(Path config_path) {
+        std::ifstream f(config_path);
+        if (!f) {
+            std::cout << "Failed to open file " << config_path;
+            return;
+        }
+        string s {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+        f.close();
+
+        int state = 1;
+        int idx = 0;
+        bool exclaimed = false;
+        string fname;
+        
+        for (char c: s) switch (state) {
+            case 1:
+                if (c == '#')
+                    state = 2;
+                if (c == '!') {
+                    exclaimed = true;
+                    state = 3;
+                }
+                if ('0' <= c && c <= '9') {
+                    idx = c - '0';
+                    state = 3;
+                }
+            
+            case 2:
+                if (c == '\n')
+                    state = 1;
+            
+            case 3:
+                if ('0' <= c && c <= '9')
+                    idx = idx * 10 + c - '0';
+                if (c == ' ')
+                    state = 4;
+            
+            case 4:
+                if (c == '"') {
+                    state = 8;
+                }
+                else if (c == '\n') {
+                    if (exclaimed)
+                        executables[idx] = fname;
+                    else
+                        tunings[idx] = fname;
+
+                    exclaimed = false;
+                    idx = 0;
+                    fname = "";
+                    state = 1;
+                }
+                else {
+                    fname += c;
+                }
+            
+            case 8:
+                if (c == '"')
+                    state = 4;
+                else
+                    fname += c;
+        }
     }
 };
 
 static void うさげ(const char *name, const char *config_path) {
-    printf(
-        "%s in_file out_file pitch velocity flags offset length consonant"
-        " cutoff volume modulation tempo pitchbend\n\n"
-        "Config file (%s) :\n"
-        "    StepSize: float: the size of each step of Z in cents (default 1200/31)\n"
-        "    ReferencePitch: float: The reference pitch (default 440.0hz)\n"
-        "    ReferencePitchName: string: The specific note that is tuned to the reference pitch (default \"A4\")\n"
-        "    Scale: array[float] or string: The list of intervals in the scale relative to the root in cents, excluding the root.\n"
-        "           or the filename of the tuning file used (not supported yet). (default 12-note subset of 31edo)\n"
-        "    ExecPath: array[string]: Command line to execute resampler (required) (example: [\"wine\", \"~/bin/resampler.exe\"])\n\n"
-        "Flags:\n"
-        "Z:  (default 0) (no limits) change pitch by integer number of steps of size StepSize.\n"
-        "    Z flag will be passed to resampler. If this is a problem, please let me know.\n"
-        , name, config_path
+    printf(R"(%s in_file out_file pitch velocity flags offset length consonant cutoff volume modulation tempo pitchbend
+
+Config file (%s):
+    # config file example file
+    # Format: <index/number> <path>
+    # Paths can be absolute or relative to the config file
+    # If you place a ! in front of a line, it will be used as a executable/resampler path
+
+    !1 "C:\Program Files (x86)\UTAU\resampler.exe"
+    1 "C:\5 equal divisions of 2_1 (1).tun"
+
+Flags:
+    # - edo
+    $ - center note (MIDI note number)
+
+    ^ - .tun file index (according to config, cannot be used with # or $)
+    ! - executable/resampler index (according to config)
+
+    ^ cannot be used in conjunction with # and $
+    this only supports A=440hz
+)"
+    , name, config_path
     );
 }
 
@@ -156,7 +267,7 @@ static constexpr auto b64_to_i = make_b64_table();
 
 static const unsigned char i_to_b64[256] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static std::vector<int16_t> pitch_string_to_cents(const std::string& in) {
+static std::vector<int16_t> pitch_string_to_cents(const string& in) {
 
     std::vector<int16_t> out;
 
@@ -205,13 +316,13 @@ static std::vector<int16_t> pitch_string_to_cents(const std::string& in) {
     return out;
 }
 
-static std::string cents_to_pitch_string(const std::vector<int16_t>& in) {
+static string cents_to_pitch_string(const std::vector<int16_t>& in) {
 
-    std::string out_str;
+    string out_str;
 
     int cnt = 1;
 
-    std::vector<std::string> pairs;
+    std::vector<string> pairs;
     for (int16_t i: in) {
         uint16_t n = i & 0xFFF;
         char app[3];
@@ -249,14 +360,33 @@ static std::string cents_to_pitch_string(const std::vector<int16_t>& in) {
     return out_str;
 }
 
-static float detune(const Config &cfg, const std::string& note_name, float cents) {
-    return cents + cfg.mapping[note_to_midi(note_name)];
+static unordered_map<char, int> string_to_flags(const string& in) {
+    unordered_map<char, int> flags;
+    int sgn = 1;
+    char last_c = -1;
+
+    for (char c: in) {
+        if (isalpha(c)) {
+            flags[c] = 0;
+            sgn = 1;
+            last_c = c;
+        } else if (c == '-') {
+            sgn = -1;
+        } else {
+            if (last_c == -1)
+                std::cout << "Flag string seems to be invalid: " << in << std::endl;
+            else
+                flags[last_c] = flags[last_c] * 10 + (c - '0');
+        }
+    }
+
+    return flags;
 }
 
 int main(int argc, char *argv[]) {
 
-    std::filesystem::path config_path = argv[0];
-    config_path = config_path.parent_path() / "31config.txt";
+    Path config_Path = argv[0];
+    config_Path = config_path.parent_path() / "31TETo_config";
   
     if (argc == 2) {
         auto s = config_path.string();
@@ -277,7 +407,7 @@ int main(int argc, char *argv[]) {
     std::cout << "'" << argv[12] << "' '" << argv[13] << "'" << std::endl;
     #endif
 
-    Config cfg("/home/atayeem/Programming/atayeem/31TETo/example.json");
+    Config cfg("/home/atayeem/Programming/atayeem/31TETo/microtau/config");
 //  Config cfg(config_path);
 
     std::vector<int16_t> pitchbend_i = pitch_string_to_cents(argv[13]);
