@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <math.h>
+#include <stdexcept>
 #include <stdio.h>
 #include <string>
 #include <unordered_map>
@@ -25,6 +26,16 @@ using std::unordered_map;
 
 static bool ends_with(string_view str, string_view suffix) {
     return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix);
+}
+
+static bool contains(string_view str, char c) {
+    return str.find(c) != std::string_view::npos;
+}
+
+static bool contains(unordered_map<char, int> flags, char flag) {
+    if (flags.find(flag) != flags.end()) {
+        return 
+    }
 }
 
 static int note_to_midi(string note) {
@@ -78,15 +89,57 @@ static string midi_to_note(int midi) {
     return out;
 }
 
+static float midi_to_cents(int x, std::vector<float> scl={}) {
+    if (scl.empty()) {
+        scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
+    }
+
+    return scl[(x-69) % scl.size()] + scl.back() * floor((x - 69) / scl.size());
+}
+
+static float catmull_rom(int p0, int p1, int p2, int p3, float t) {
+    auto t2 = t * t;
+    auto t3 = t2 * t;
+
+    return 0.5 * (
+        (2 * p1) +
+        (-p0 + p2) * t +
+        (2*p0 - 5*p1 + 4*p2 - p3) * t2 +
+        (-p0 + 3*p1 - 3*p2 + p3) * t3
+    );
+}
+
+static float midi_to_cents_catmull(float x, std::vector<float> scl={}, int offset=69) {
+    if (scl.empty()) {
+        scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
+    }
+
+    int N = scl.size();
+    int octaves = ((int)x - offset) / N;
+    float pos = fmod(x - offset, N);
+    int i1 = pos;
+
+    int i0 = (i1 - 1) % N;
+    int i2 = (i1 + 1) % N;
+    int i3 = (i1 + 2) % N;
+    float t = pos - i1;
+
+    float cents = catmull_rom(scl[i0], scl[i1], scl[i2], scl[i3], t);
+
+    cents += scl.back() * octaves;
+    return cents;
+}
+
 struct Scale {
 private:
     bool using_tun = false;
     bool using_scl = false;
 
-    std::array<float, 128> tun_notes;
+    std::vector<float> tun_notes;
     std::vector<float> scl_notes;
 
     void parse_tun(Path fname) {
+        tun_notes.resize(128);
         std::ifstream f(fname);
         if (!f) {
             std::cout << "Failed to open tun file " << fname << std::endl;
@@ -130,25 +183,69 @@ private:
             if (line[0] == '!')
                 continue;
 
-            lines.push_back(line);
+            std::string word;
+            std::istringstream (line) >> word;
+            if (word.empty())
+                continue;
+
+            lines.push_back(word);
         }
 
         // lines[0] is ignored.
         int scale_size = std::stoi(lines[1]);
         
-        std::for_each(lines.begin() + 2, lines.end(), [](string& s){
-            int i = 0;
-            for (char c: s) {
-                
-                i++;
+        for (auto p = lines.begin() + 2; p < lines.end(); ++p) {
+            bool has_slash = contains(*p, '/');
+            bool has_dot = contains(*p, '.');
+
+            if (has_slash && has_dot) {
+                std::cout << "Failed to parse scl value " << *p << std::endl;
+                continue;
             }
-        });
+            
+            else if (has_slash) {
+                auto slash_pos = (*p).find_first_of('/');
+                auto num = (float) std::stoi((*p).substr(0, slash_pos));
+                auto den = std::stoi((*p).substr(slash_pos + 1));
+
+                scl_notes.push_back(log2(num / den) * 1200);
+            }
+
+            else if (has_dot) {
+                scl_notes.push_back(std::stof(*p));
+            }
+
+            else {
+                scl_notes.push_back(log2((float)std::stoi(*p)) * 1200);
+            }
+        }
     }
 
 public:
+
+    const float operator[](float i) {
+        if (using_tun) {
+            return midi_to_cents_catmull(i, tun_notes, 0);
+        }
+
+        if (using_scl) {
+            return midi_to_cents_catmull(i, scl_notes);
+        }
+
+        throw std::logic_error("Didn't load a valid config file before using Scale!");
+    }
+
     Scale(Path scale_path) {
         if (ends_with(scale_path.string(), ".tun")) {
+            parse_tun(scale_path);
+        }
 
+        else if (ends_with(scale_path.string(), ".scl")) {
+            parse_scl(scale_path);
+        }
+
+        else {
+            std::cout << "Unsupported tuning file type, given: " << scale_path << std::endl; 
         }
     }
 };
@@ -384,11 +481,11 @@ static unordered_map<char, int> string_to_flags(const string& in) {
 }
 
 int main(int argc, char *argv[]) {
-
-    Path config_Path = argv[0];
-    config_Path = config_path.parent_path() / "31TETo_config";
   
     if (argc == 2) {
+        Path config_path = argv[0];
+        config_path = config_path.parent_path() / "config";
+
         auto s = config_path.string();
         うさげ(argv[0], s.c_str());
         return 1;
@@ -407,33 +504,44 @@ int main(int argc, char *argv[]) {
     std::cout << "'" << argv[12] << "' '" << argv[13] << "'" << std::endl;
     #endif
 
-    Config cfg("/home/atayeem/Programming/atayeem/31TETo/microtau/config");
-//  Config cfg(config_path);
+    // prog in_file out_file pitch velocity flags offset length consonant cutoff volume modulation tempo pitchbend
 
-    std::vector<int16_t> pitchbend_i = pitch_string_to_cents(argv[13]);
+    Path config_path = argv[0];
+    config_path = config_path.parent_path() / "config";
+    Config config(config_path);
 
-    std::vector<float> pitchbend;
-    for (const auto i: pitchbend_i)
-        pitchbend.push_back(detune(cfg, argv[3], static_cast<float>(i)));
+    // ignore argv[1]: in_file, argv[2]: out_file
 
-    pitchbend_i.clear();
+    int pitch = note_to_midi(argv[3]);
 
-    #ifdef DEBUG
-    for (int i = 0; i < 132; i++) {
-        std::cout << midi_to_note(i) << ": " << cfg.mapping[i] << "\n";
-    }
-    #endif
+    // ignore argv[4]: velocity
 
-    for (const auto f: pitchbend) {
+    unordered_map<char, int> flags = string_to_flags(argv[5]);
+    
+    // ignore argv[6] - argv[12]
+
+    std::vector<int16_t> pitchbend_in = pitch_string_to_cents(argv[13]);
+    std::vector<float> pitchbend_middle;
+    std::vector<int16_t> pitchbend_out;
+
+    for (const auto i: pitchbend_in)
+        pitchbend_middle.push_back(detune(cfg, argv[3], static_cast<float>(i)));
+
+    for (const auto f: pitchbend_middle) {
         if (f > SHRT_MAX)
             std::cout << "Frequency went above maximum!\n";
         if (f < SHRT_MIN)
             std::cout << "Frequency went below minimum!\n";
 
-        pitchbend_i.push_back(static_cast<int16_t>(f));
+        pitchbend_out.push_back(static_cast<int16_t>(f));
     }
     
     std::vector<char *> cmd;
+
+    if (config.executables.empty()) {
+        std::cout << "Fatal error, no executables in config file " << config_path << std::endl;
+        return 1;
+    }
     
     // Put the executable name in.
     for (const auto& arg: cfg.ExecPath) {
