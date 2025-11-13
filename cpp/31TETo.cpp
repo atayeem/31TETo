@@ -132,7 +132,7 @@ static string midi_to_note(int midi) {
     int idx = WRAPPED_MOD(midi, 12);
     out += names[idx];
     
-    out += std::to_string(midi / 12);
+    out += std::to_string(midi / 12 - 2);
     return out;
 }
 
@@ -524,6 +524,10 @@ static string cents_to_pitch_string(const std::vector<int16_t>& in) {
     return out_str;
 }
 
+static int cents_to_midi(float cents) {
+    return 69 + floor(cents/100);
+}
+
 int main(int argc, char *argv[]) {
   
     if (argc < 2) {
@@ -575,14 +579,11 @@ int main(int argc, char *argv[]) {
     string new_note;
     {
         std::vector<int16_t> pitchbend_in = pitch_string_to_cents(argv[13]);
-        std::cout << "\n";
-
         std::vector<float> pitchbend_middle(pitchbend_in.begin(), pitchbend_in.end());
-        std::cout << "\n";
-
         std::vector<int16_t> pitchbend_out;
 
         float offset = midi_to_cents(note_to_midi(argv[3]));
+
         std::cout << "argv[3]: " << argv[3] << std::endl;
         std::cout << "note_to_midi: " << note_to_midi(argv[3]) << std::endl;
         std::cout << "offset: " << offset << std::endl;
@@ -593,7 +594,7 @@ int main(int argc, char *argv[]) {
         std::cout << "\n";
 
         float avg = std::accumulate(pitchbend_middle.begin(), pitchbend_middle.end(), 0.0) / pitchbend_middle.size();
-        new_note = midi_to_note(69 + floor(avg/100));
+        new_note = midi_to_note(cents_to_midi(avg));
         std::cout << "average cents: " << avg << " which is the note " << new_note << std::endl;
 
         std::for_each(pitchbend_middle.begin(), pitchbend_middle.end(), [&](float &f) {
