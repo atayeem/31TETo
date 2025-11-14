@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -54,8 +53,9 @@ Flags:
     );
 }
 
-static bool ends_with(string_view str, string_view suffix) {
-    return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix);
+static bool ends_with(std::string_view str, std::string_view suffix) {
+    return str.size() >= suffix.size()
+        && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 static bool contains(string_view str, char c) {
@@ -132,7 +132,7 @@ static string midi_to_note(int midi) {
     int idx = WRAPPED_MOD(midi, 12);
     out += names[idx];
     
-    out += std::to_string(midi / 12 - 2);
+    out += std::to_string(midi / 12 - 1);
     return out;
 }
 
@@ -141,7 +141,9 @@ static float midi_to_cents(int x, std::vector<float> scl={}) {
         scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
     }
 
-    return scl[WRAPPED_MOD(x - 69, (int)scl.size())] + scl.back() * floor((x - 69.0) / scl.size());
+    x -= 69;
+
+    return scl[WRAPPED_MOD(x - 1, (int)scl.size())] + scl.back() * floor((x - 1.0) / scl.size());
 }
 
 static float catmull_rom(int p0, int p1, int p2, int p3, float t) {
@@ -156,12 +158,18 @@ static float catmull_rom(int p0, int p1, int p2, int p3, float t) {
     );
 }
 
+// Remeber: the vector is supposed to be copied. It will be changed.
 static float midi_to_cents_catmull(float x, std::vector<float> scl={}, int offset=69) {
     if (scl.empty()) {
         scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
     }
 
     int N = scl.size();
+
+    auto equave = scl.back();
+    scl.pop_back();
+    scl.insert(scl.begin(), 0.0);
+
     int octaves = ((int)x - offset) / N;
     float pos = WRAPPED_FMOD(x - offset, N);
     int i1 = pos;
@@ -173,7 +181,7 @@ static float midi_to_cents_catmull(float x, std::vector<float> scl={}, int offse
 
     float cents = catmull_rom(scl[i0], scl[i1], scl[i2], scl[i3], t);
 
-    cents += scl.back() * octaves;
+    cents += equave * octaves;
     return cents;
 }
 
@@ -196,7 +204,18 @@ private:
         std::string s;
         using_tun = true;
 
-        while (std::getline(f, s), s != "[Exact tuning]");
+        bool pass = false;
+        while (std::getline(f, s))
+            if (s == "[Exact Tuning]") {
+                pass = true;
+                break;
+            }
+        
+        if (!pass) {
+            std::cout << "Couldn't find line '[Exact Tuning]' in tun file" << std::endl;
+            return;
+        }
+
         
         while (std::getline(f, s)) {
             std::istringstream iss(s);
@@ -306,6 +325,21 @@ public:
         for (int i = 1; i < edo; i++) {
             scl_notes.push_back(1200.0 * i / edo);
         }
+    }
+
+    friend std::ostream& operator<<(std::ostream& os, const Scale& obj) {
+        if (obj.using_tun) {
+            os << "tun_notes=";
+            for (const auto &note: obj.tun_notes)
+                os << " " << note;
+        }
+
+        if (obj.using_scl) {
+            os << "scl_notes:";
+            for (const auto &note: obj.scl_notes)
+                os << " " << note;
+        }
+        return os;
     }
 };
 
@@ -528,7 +562,48 @@ static int cents_to_midi(float cents) {
     return 69 + floor(cents/100);
 }
 
+#define LV(x) std::cout << #x << ": " << (x) << "\n"
+
 int main(int argc, char *argv[]) {
+    #ifdef SHORT_TEST
+    
+    string scale_path = "MOS 5L 2s.tun";
+    string note = "C5";
+    int midi = note_to_midi(note);
+    float cents = midi_to_cents(midi);
+
+    Scale scale(scale_path);
+
+    string ps = "AB";
+    float cents_ps = pitch_string_to_cents(ps)[0];
+
+    float total_cents = cents + cents_ps;
+    float detuned_cents = scale.distort(total_cents);
+
+    int new_midi = cents_to_midi(round(detuned_cents/100)*100);
+    string new_note = midi_to_note(new_midi);
+
+    float midi_offset = midi_to_cents(new_midi);
+    float new_cents = detuned_cents - midi_offset;
+    string new_ps = cents_to_pitch_string({static_cast<short>(new_cents)});
+
+    LV(scale_path);
+    LV(scale);
+    LV(note);
+    LV(midi);
+    LV(cents);
+    LV(ps);
+    LV(cents_ps);
+    LV(total_cents);
+    LV(detuned_cents);
+    LV(new_midi);
+    LV(new_note);
+    LV(midi_offset);
+    LV(new_cents);
+    LV(new_ps);
+
+    return 0;
+    #else
   
     if (argc < 2) {
         Path config_path = argv[0];
@@ -575,48 +650,50 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    string new_pitch_string;
-    string new_note;
-    {
-        std::vector<int16_t> pitchbend_in = pitch_string_to_cents(argv[13]);
-        std::vector<float> pitchbend_middle(pitchbend_in.begin(), pitchbend_in.end());
-        std::vector<int16_t> pitchbend_out;
+    std::vector<short> given_cents_s = pitch_string_to_cents(argv[13]);
+    std::vector<float> pitchbend_curve(given_cents_s.begin(), given_cents_s.end());
 
-        float offset = midi_to_cents(note_to_midi(argv[3]));
+    int given_note_cents = midi_to_cents(note_to_midi(argv[3]));
 
-        std::cout << "argv[3]: " << argv[3] << std::endl;
-        std::cout << "note_to_midi: " << note_to_midi(argv[3]) << std::endl;
-        std::cout << "offset: " << offset << std::endl;
-        std::for_each(pitchbend_middle.begin(), pitchbend_middle.end(), [&](float &f) {
-            f = scale.distort(offset + f);
-            std::cout << f << " ";
-        });
-        std::cout << "\n";
+    for (auto& value: pitchbend_curve)
+        value = scale.distort(value + given_note_cents);
 
-        float avg = std::accumulate(pitchbend_middle.begin(), pitchbend_middle.end(), 0.0) / pitchbend_middle.size();
-        new_note = midi_to_note(cents_to_midi(avg));
-        std::cout << "average cents: " << avg << " which is the note " << new_note << std::endl;
+    // Calculate the average pitch
+    float avg = std::accumulate(pitchbend_curve.begin(), pitchbend_curve.end(), 0.0) / pitchbend_curve.size();
+    int new_midi = cents_to_midi(round(avg/100)*100);
 
-        std::for_each(pitchbend_middle.begin(), pitchbend_middle.end(), [&](float &f) {
-            float final = f - avg;
-            if (final < -2048.0)
-                final = -2048.0;
-            if (final > 2047.0)
-                final = 2047.0;
-        
-            pitchbend_out.push_back(final);
-        });
+    // Create the output note
+    string new_note = midi_to_note(new_midi);
 
-        new_pitch_string = cents_to_pitch_string(pitchbend_out);
+    float midi_offset = midi_to_cents(new_midi);
+
+    std::vector<short> new_cents_s;
+
+    // Shift back
+    for (auto& value: pitchbend_curve) {
+        value -= midi_offset;
+
+        if (value < -2048) {
+            std::cout << "Pitchbend went below limit!\n";
+            new_cents_s.push_back(-2048);
+        }
+        else if (value > 2047) {
+            std::cout << "Pitchbend went above limit!\n";
+            new_cents_s.push_back(2047);
+        }
+        else {
+            new_cents_s.push_back(value);
+        }
     }
+
+    string new_pitch_string = cents_to_pitch_string(new_cents_s);
 
     std::vector<const char*> exec_string;
     const char* exec_name = config.executables[flags.resampler_index].c_str();
     const char* true_exec_name = exec_name;
 
     #ifndef _WIN32
-    //if (ends_with(exec_name, ".exe")) {
-    if (true) {
+    if (ends_with(exec_name, ".exe")) {
         exec_string.push_back("wine");
         true_exec_name = "wine";
     }
@@ -652,5 +729,6 @@ int main(int argc, char *argv[]) {
     _spawnvp(_P_OVERLAY, true_exec_name, const_cast<char* const*>(exec_string.data()));    
     #else
     execvp(true_exec_name, const_cast<char* const*>(exec_string.data()));
+    #endif
     #endif
 }
