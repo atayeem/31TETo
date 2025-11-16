@@ -218,6 +218,12 @@ private:
 
         
         while (std::getline(f, s)) {
+            if (s == "[Scale End]")
+                break;
+
+            if (s.empty())
+                continue;
+        
             std::istringstream iss(s);
 
             std::string label;
@@ -230,6 +236,10 @@ private:
             } else {
                 std::cout << "Could not parse this line of tun file: " << s << std::endl;
             }
+        }
+
+        for (auto &f: tun_notes) {
+            f -= tun_notes[68];
         }
     }
 
@@ -290,7 +300,7 @@ public:
 
     float midi_to_detuned_cents(float i) {
         if (using_tun) {
-            return midi_to_cents_catmull(i, tun_notes, 0);
+            return (midi_to_cents(floor(i), tun_notes) + midi_to_cents(ceil(i), tun_notes)) / 2.0;
         }
 
         if (using_scl) {
@@ -563,7 +573,7 @@ static int cents_to_midi(float cents) {
 }
 
 #define LV(x) std::cout << #x << ": " << (x) << "\n"
-
+#define SHORT_TEST_2
 int main(int argc, char *argv[]) {
     #ifdef SHORT_TEST
     
@@ -603,6 +613,15 @@ int main(int argc, char *argv[]) {
     LV(new_ps);
 
     return 0;
+    #else
+    #ifdef SHORT_TEST_2
+    Scale scale("MOS 5L 2s.scl");
+    LV(scale);
+
+    for (float f = -1200; f < 1210; f += 10) {
+        std::cout << f << " -> " << scale.distort(f) << "\n";
+    }
+    std::cout << std::flush;
     #else
   
     if (argc < 2) {
@@ -729,6 +748,7 @@ int main(int argc, char *argv[]) {
     _spawnvp(_P_OVERLAY, true_exec_name, const_cast<char* const*>(exec_string.data()));    
     #else
     execvp(true_exec_name, const_cast<char* const*>(exec_string.data()));
+    #endif
     #endif
     #endif
 }
