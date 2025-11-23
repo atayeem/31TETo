@@ -22,20 +22,10 @@
 #define WRAPPED_MOD(a, b) (((a) % (b) + (b)) % (b))
 #define WRAPPED_FMOD(a, b) (fmod(fmod((a), (b)) + (b), (b))) 
 
-#define LV(x) std::cout << #x << ": " << (x) << "\n"
-
 using Path = std::filesystem::path;
 using std::string;
 using std::string_view;
 using std::unordered_map;
-
-using NoteName = string;
-using MidiIndex = int;
-using NoteIndex = int;
-using CentValue = float;
-using PitchbendValue = int16_t;
-
-static int MidiCentre = 60;
 
 static void うさげ(const char *name, const char *config_path) {
     printf(R"(%s in_file out_file pitch velocity flags offset length consonant cutoff volume modulation tempo pitchbend
@@ -63,7 +53,7 @@ Flags:
     );
 }
 
-static bool ends_with(string_view str, string_view suffix) {
+static bool ends_with(std::string_view str, std::string_view suffix) {
     return str.size() >= suffix.size()
         && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
@@ -76,7 +66,7 @@ static bool contains(unordered_map<char, int> flags, char flag) {
     return flags.find(flag) != flags.end();
 }
 
-static constexpr auto _make_b64_table() {
+static constexpr auto make_b64_table() {
     std::array<unsigned char, 256> table{};
     for (unsigned i = 0; i < 256; ++i) {
         table[i] =
@@ -90,11 +80,11 @@ static constexpr auto _make_b64_table() {
     return table;
 }
 
-static constexpr auto b64_to_i = _make_b64_table();
+static constexpr auto b64_to_i = make_b64_table();
 
 static const unsigned char i_to_b64[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static MidiIndex note_to_midi(NoteName note) {
+static int note_to_midi(string note) {
     const char *s = note.c_str();
     int n, octv, sgn;
     switch (s[0]) {
@@ -135,7 +125,7 @@ static MidiIndex note_to_midi(NoteName note) {
     return (sgn * octv + 1) * 12 + n;
 }
 
-static NoteName midi_to_note(MidiIndex midi) {
+static string midi_to_note(int midi) {
     string out;
     std::array<const char*, 12> names = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
@@ -151,38 +141,49 @@ static float midi_to_cents(int x, std::vector<float> scl={}) {
         scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
     }
 
-    x -= 69; // make midi centre 0
-    x -= 1; // scl format has second degree as 0th element.
+    x -= 69;
 
-    return scl[WRAPPED_MOD(x, (int)scl.size())] + scl.back() * floor(x / scl.size());
+    return scl[WRAPPED_MOD(x - 1, (int)scl.size())] + scl.back() * floor((x - 1.0) / scl.size());
 }
 
-static float midi_to_cents_linear(float x, std::vector<float> scl = {}) {
+static float catmull_rom(int p0, int p1, int p2, int p3, float t) {
+    auto t2 = t * t;
+    auto t3 = t2 * t;
+
+    return 0.5 * (
+        (2 * p1) +
+        (-p0 + p2) * t +
+        (2*p0 - 5*p1 + 4*p2 - p3) * t2 +
+        (-p0 + 3*p1 - 3*p2 + p3) * t3
+    );
+}
+
+// Remeber: the vector is supposed to be copied. It will be changed.
+static float midi_to_cents_catmull(float x, std::vector<float> scl={}, int offset=69) {
     if (scl.empty()) {
-        scl = {100,200,300,400,500,600,700,800,900,1000,1100,1200};
+        scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
     }
 
-    const int N = (int)scl.size();
-    const float octave = scl.back();
+    int N = scl.size();
 
-    x -= 69;
-    x -= 1;
+    auto equave = scl.back();
+    scl.pop_back();
+    scl.insert(scl.begin(), 0.0);
 
-    // MIDI -> scale index conversion
-    float d = x * (N / 12.0f);  // << THE FIX
+    int octaves = ((int)x - offset) / N;
+    float pos = WRAPPED_FMOD(x - offset, N);
+    int i1 = pos;
 
-    float d_wrap = WRAPPED_FMOD(d, (float)N);
-    int i0 = (int)floor(d_wrap);
-    int i1 = WRAPPED_MOD(i0 + 1, N);
-    float f = d_wrap - i0;
+    int i0 = WRAPPED_MOD(i1 - 1, N);
+    int i2 = WRAPPED_MOD(i1 + 1, N);
+    int i3 = WRAPPED_MOD(i1 + 2, N);
+    float t = pos - i1;
 
-    float local = scl[i0] + (scl[i1] - scl[i0]) * f;
+    float cents = catmull_rom(scl[i0], scl[i1], scl[i2], scl[i3], t);
 
-    float octaves = floor(d / N);
-
-    return local + octave * octaves;
+    cents += equave * octaves;
+    return cents;
 }
-
 
 class Scale {
 private:
@@ -235,6 +236,10 @@ private:
             } else {
                 std::cout << "Could not parse this line of tun file: " << s << std::endl;
             }
+        }
+
+        for (auto &f: tun_notes) {
+            f -= tun_notes[68];
         }
     }
 
@@ -295,11 +300,11 @@ public:
 
     float midi_to_detuned_cents(float i) {
         if (using_tun) {
-            return midi_to_cents_linear(i, tun_notes);
+            return (midi_to_cents(floor(i), tun_notes) + midi_to_cents(ceil(i), tun_notes)) / 2.0;
         }
 
         if (using_scl) {
-            return midi_to_cents_linear(i, scl_notes);
+            return midi_to_cents_catmull(i, scl_notes);
         }
 
         throw std::logic_error("Didn't load a valid config file before using Scale!");
@@ -340,7 +345,7 @@ public:
         }
 
         if (obj.using_scl) {
-            os << "scl_notes=";
+            os << "scl_notes:";
             for (const auto &note: obj.scl_notes)
                 os << " " << note;
         }
@@ -567,6 +572,7 @@ static int cents_to_midi(float cents) {
     return 69 + floor(cents/100);
 }
 
+#define LV(x) std::cout << #x << ": " << (x) << "\n"
 #define SHORT_TEST_2
 int main(int argc, char *argv[]) {
     #ifdef SHORT_TEST
