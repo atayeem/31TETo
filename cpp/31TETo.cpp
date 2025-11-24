@@ -21,11 +21,18 @@
 
 #define WRAPPED_MOD(a, b) (((a) % (b) + (b)) % (b))
 #define WRAPPED_FMOD(a, b) (fmod(fmod((a), (b)) + (b), (b))) 
+#define LERP(a, b, t) ((a) + ((b)-(a))*(t))
+
+#define LV(x) dout << #x << ": " << (x) << "\n"
 
 using Path = std::filesystem::path;
 using std::string;
 using std::string_view;
 using std::unordered_map;
+
+#define dout std::cout
+
+static int Gcentre_note = 69;
 
 static void うさげ(const char *name, const char *config_path) {
     printf(R"(%s in_file out_file pitch velocity flags offset length consonant cutoff volume modulation tempo pitchbend
@@ -41,7 +48,7 @@ Config file (%s):
 
 Flags:
     # - edo
-    $ - center note (MIDI note number)
+    $ - center note (MIDI note number, default=60)
 
     ^ - .tun file index (according to config, cannot be used with # or $)
     ! - executable/resampler index (according to config)
@@ -136,53 +143,29 @@ static string midi_to_note(int midi) {
     return out;
 }
 
+// Remember: the vector is supposed to be copied. It will be changed.
 static float midi_to_cents(int x, std::vector<float> scl={}) {
     if (scl.empty()) {
         scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
     }
 
-    x -= 69;
-
-    return scl[WRAPPED_MOD(x - 1, (int)scl.size())] + scl.back() * floor((x - 1.0) / scl.size());
-}
-
-static float catmull_rom(int p0, int p1, int p2, int p3, float t) {
-    auto t2 = t * t;
-    auto t3 = t2 * t;
-
-    return 0.5 * (
-        (2 * p1) +
-        (-p0 + p2) * t +
-        (2*p0 - 5*p1 + 4*p2 - p3) * t2 +
-        (-p0 + 3*p1 - 3*p2 + p3) * t3
-    );
-}
-
-// Remeber: the vector is supposed to be copied. It will be changed.
-static float midi_to_cents_catmull(float x, std::vector<float> scl={}, int offset=69) {
-    if (scl.empty()) {
-        scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
-    }
-
-    int N = scl.size();
-
     auto equave = scl.back();
     scl.pop_back();
     scl.insert(scl.begin(), 0.0);
 
-    int octaves = ((int)x - offset) / N;
-    float pos = WRAPPED_FMOD(x - offset, N);
-    int i1 = pos;
+    x -= Gcentre_note;
+    //LV(WRAPPED_MOD(x, (int)scl.size()));
+    //LV(floor((float) x / scl.size()));
+    return scl[WRAPPED_MOD(x, (int)scl.size())] + equave * floor((float) x / scl.size());
+}
 
-    int i0 = WRAPPED_MOD(i1 - 1, N);
-    int i2 = WRAPPED_MOD(i1 + 1, N);
-    int i3 = WRAPPED_MOD(i1 + 2, N);
-    float t = pos - i1;
+// Remember: the vector is supposed to be copied. It will be changed.
+static float midi_to_cents_lerp(float x, std::vector<float> scl={}) {
+    if (scl.empty()) {
+        scl = std::vector<float>({100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200});
+    }
 
-    float cents = catmull_rom(scl[i0], scl[i1], scl[i2], scl[i3], t);
-
-    cents += equave * octaves;
-    return cents;
+    return LERP(midi_to_cents(floor(x), scl), midi_to_cents(ceil(x), scl), x - floor(x));
 }
 
 class Scale {
@@ -197,7 +180,7 @@ private:
         tun_notes.resize(128);
         std::ifstream f(fname);
         if (!f) {
-            std::cout << "Failed to open tun file " << fname << std::endl;
+            dout << "Failed to open tun file " << fname << std::endl;
             return;
         }
 
@@ -212,7 +195,7 @@ private:
             }
         
         if (!pass) {
-            std::cout << "Couldn't find line '[Exact Tuning]' in tun file" << std::endl;
+            dout << "Couldn't find line '[Exact Tuning]' in tun file" << std::endl;
             return;
         }
 
@@ -234,19 +217,20 @@ private:
             if (iss >> label >> index >> equals >> val) {
                 tun_notes[index] = val;
             } else {
-                std::cout << "Could not parse this line of tun file: " << s << std::endl;
+                dout << "Could not parse this line of tun file: " << s << std::endl;
             }
         }
 
+        auto offset = tun_notes[Gcentre_note];
         for (auto &f: tun_notes) {
-            f -= tun_notes[68];
+            f -= offset;
         }
     }
 
     void parse_scl(Path fname) {
         std::ifstream f(fname);
         if (!f) {
-            std::cout << "Failed to open scl file " << fname << std::endl;
+            dout << "Failed to open scl file " << fname << std::endl;
             return;
         }
 
@@ -274,7 +258,7 @@ private:
             bool has_dot = contains(*p, '.');
 
             if (has_slash && has_dot) {
-                std::cout << "Failed to parse scl value " << *p << std::endl;
+                dout << "Failed to parse scl value " << *p << std::endl;
                 continue;
             }
             
@@ -300,19 +284,21 @@ public:
 
     float midi_to_detuned_cents(float i) {
         if (using_tun) {
-            return (midi_to_cents(floor(i), tun_notes) + midi_to_cents(ceil(i), tun_notes)) / 2.0;
+            auto low = tun_notes.at((int) floor(i));
+            auto high = tun_notes.at((int) ceil(i));
+            return LERP(low, high, i - floor(i));
         }
 
         if (using_scl) {
-            return midi_to_cents_catmull(i, scl_notes);
+            return midi_to_cents_lerp(i, scl_notes);
         }
 
         throw std::logic_error("Didn't load a valid config file before using Scale!");
     }
 
     // Distort a cent value to its detuned value.
-    float distort(float cents, int refnote=69) {
-        float midi = refnote + cents/100;
+    float distort(float cents) {
+        float midi = Gcentre_note + cents/100;
         return midi_to_detuned_cents(midi);
     }
 
@@ -326,13 +312,13 @@ public:
         }
 
         else {
-            std::cout << "Unsupported tuning file type, given: " << scale_path << std::endl; 
+            dout << "Unsupported tuning file type, given: " << scale_path << std::endl; 
         }
     }
 
     Scale(int edo) {
         using_scl = true;
-        for (int i = 1; i < edo; i++) {
+        for (int i = 1; i < edo+1; i++) {
             scl_notes.push_back(1200.0 * i / edo);
         }
     }
@@ -345,7 +331,7 @@ public:
         }
 
         if (obj.using_scl) {
-            os << "scl_notes:";
+            os << "scl_notes=";
             for (const auto &note: obj.scl_notes)
                 os << " " << note;
         }
@@ -361,7 +347,7 @@ public:
     Config(Path config_path) {
         std::ifstream f(config_path);
         if (!f) {
-            std::cout << "Failed to open file " << config_path;
+            dout << "Failed to open file " << config_path;
             return;
         }
         string s {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
@@ -440,7 +426,7 @@ private:
             resampler_index = flags['!'];
 
         if (contains(flags, '$'))
-            center_note = flags['$'];
+            Gcentre_note = flags['$'];
 
         if (contains(flags, '^'))
             tuning_file_index = flags['^'];
@@ -448,7 +434,6 @@ private:
 
 public:
     int edo = -1;
-    int center_note = 69;
     int tuning_file_index = -1;
     int resampler_index = 1;
 
@@ -466,7 +451,7 @@ public:
                 sgn = -1;
             } else {
                 if (last_c == -1)
-                    std::cout << "Flag string seems to be invalid: " << in << std::endl;
+                    dout << "Flag string seems to be invalid: " << in << std::endl;
                 else
                     flags[last_c] = flags[last_c] * 10 + (c - '0');
             }
@@ -569,15 +554,13 @@ static string cents_to_pitch_string(const std::vector<int16_t>& in) {
 }
 
 static int cents_to_midi(float cents) {
-    return 69 + floor(cents/100);
+    return Gcentre_note + floor(cents/100);
 }
 
-#define LV(x) std::cout << #x << ": " << (x) << "\n"
-#define SHORT_TEST_2
 int main(int argc, char *argv[]) {
     #ifdef SHORT_TEST
     
-    string scale_path = "MOS 5L 2s.tun";
+    int scale_path = 31;
     string note = "C5";
     int midi = note_to_midi(note);
     float cents = midi_to_cents(midi);
@@ -615,13 +598,13 @@ int main(int argc, char *argv[]) {
     return 0;
     #else
     #ifdef SHORT_TEST_2
-    Scale scale("MOS 5L 2s.scl");
+    Scale scale(31);
     LV(scale);
 
     for (float f = -1200; f < 1210; f += 10) {
-        std::cout << f << " -> " << scale.distort(f) << "\n";
+        dout << f << " -> " << scale.distort(f) << "\n";
     }
-    std::cout << std::flush;
+    dout << std::flush;
     #else
   
     if (argc < 2) {
@@ -634,20 +617,20 @@ int main(int argc, char *argv[]) {
     }
 
     if (argc != 14) {
-        std::cout << "[31TETo] Incorrect number of command line arguments given. Expected 14, got " << argc << std::endl;
-        std::cout << "[31TETo] Command given:";
+        dout << "[31TETo] Incorrect number of command line arguments given. Expected 14, got " << argc << std::endl;
+        dout << "[31TETo] Command given:";
         for (int i = 0; i < argc; i++)
-            std::cout << " " << argv[i];
-        std::cout << std::endl;
+            dout << " " << argv[i];
+        dout << std::endl;
         return 1;
     }
 
     #ifdef DEBUG
-    // std::cout << "set +H; valgrind";
+    // dout << "set +H; valgrind";
     for (int i = 0; i < argc; i++) {
-        std::cout << " '" << argv[i] << "'";
+        dout << " '" << argv[i] << "'";
     }
-    std::cout << std::endl;
+    dout << std::endl;
     #endif
 
     // resampler in_file out_file pitch velocity [flags] [offset] [length] [consonant] [cutoff] [volume] [modulation] [tempo] [pitchbend]
@@ -665,7 +648,7 @@ int main(int argc, char *argv[]) {
     } else if (flags.edo > 0) {
         Scale scale(flags.edo);
     } else {
-        std::cout << "Didn't specify a tuning file or EDO" << std::endl;
+        dout << "Didn't specify a tuning file or EDO" << std::endl;
         return 1;
     }
 
@@ -693,11 +676,11 @@ int main(int argc, char *argv[]) {
         value -= midi_offset;
 
         if (value < -2048) {
-            std::cout << "Pitchbend went below limit!\n";
+            dout << "Pitchbend went below limit!\n";
             new_cents_s.push_back(-2048);
         }
         else if (value > 2047) {
-            std::cout << "Pitchbend went above limit!\n";
+            dout << "Pitchbend went above limit!\n";
             new_cents_s.push_back(2047);
         }
         else {
@@ -735,14 +718,14 @@ int main(int argc, char *argv[]) {
     exec_string.push_back(nullptr); // null terminator
 
 
-    std::cout << "EXECUTING NOW:";
+    dout << "EXECUTING NOW:";
     for (auto s: exec_string) {
         if (s)
-            std::cout << " '" << s << "'";
+            dout << " '" << s << "'";
     }
-    std::cout << std::endl;
+    dout << std::endl;
 
-    std::cout << std::flush;
+    dout << std::flush;
     std::cerr << std::flush;
     #ifdef _WIN32
     _spawnvp(_P_OVERLAY, true_exec_name, const_cast<char* const*>(exec_string.data()));    
