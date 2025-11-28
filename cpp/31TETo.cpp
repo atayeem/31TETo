@@ -560,55 +560,6 @@ static int cents_to_midi(float cents) {
 }
 
 int main(int argc, char *argv[]) {
-    #ifdef SHORT_TEST
-    
-    int scale_path = 31;
-    string note = "C5";
-    int midi = note_to_midi(note);
-    float cents = midi_to_cents(midi);
-
-    Scale scale(scale_path);
-
-    string ps = "AB";
-    float cents_ps = pitch_string_to_cents(ps)[0];
-
-    float total_cents = cents + cents_ps;
-    float detuned_cents = scale.distort(total_cents);
-
-    int new_midi = cents_to_midi(round(detuned_cents/100)*100);
-    string new_note = midi_to_note(new_midi);
-
-    float midi_offset = midi_to_cents(new_midi);
-    float new_cents = detuned_cents - midi_offset;
-    string new_ps = cents_to_pitch_string({static_cast<short>(new_cents)});
-
-    LV(scale_path);
-    LV(scale);
-    LV(note);
-    LV(midi);
-    LV(cents);
-    LV(ps);
-    LV(cents_ps);
-    LV(total_cents);
-    LV(detuned_cents);
-    LV(new_midi);
-    LV(new_note);
-    LV(midi_offset);
-    LV(new_cents);
-    LV(new_ps);
-
-    return 0;
-    #else
-    #ifdef SHORT_TEST_2
-    Scale scale(31);
-    LV(scale);
-
-    for (float f = -1200; f < 1210; f += 10) {
-        dout << f << " -> " << scale.distort(f) << "\n";
-    }
-    dout << std::flush;
-    #else
-  
     if (argc < 2) {
         Path config_path = argv[0];
         config_path = config_path.parent_path() / "config";
@@ -737,7 +688,5 @@ int main(int argc, char *argv[]) {
     _spawnvp(_P_OVERLAY, true_exec_name, const_cast<char* const*>(exec_string.data()));    
     #else
     execvp(true_exec_name, const_cast<char* const*>(exec_string.data()));
-    #endif
-    #endif
     #endif
 }
