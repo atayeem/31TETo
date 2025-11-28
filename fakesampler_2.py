@@ -12,6 +12,9 @@ b64 = {
     "/": 63
 }
 
+def LERP(a: float, b: float, t: float):
+    return ((a) + ((b)-(a))*(t))
+
 def _init_b64():
     A = ord("A")
     a = ord("a")
@@ -176,6 +179,8 @@ def flags_to_new_flags_and_detune(flags: str) -> tuple[str, float]:
     
     return (out_s, out_f)
 
+def exact_detune(p: float):
+    return p
 
 # resampler in_file out_file pitch velocity [flags] [offset] [length] [consonant] [cutoff] [volume] [modulation] [tempo] [pitchbend]
 def main(argc: int, argv: list[str]):
@@ -188,7 +193,7 @@ def main(argc: int, argv: list[str]):
 
     detune = note_string_to_detune_amount(argv[3])
     new_flags, flag_detune = flags_to_new_flags_and_detune(argv[5])
-    pitchbend = cents_to_pitch_string(floats_to_ints([p + detune + flag_detune for p in pitchbend]))
+    pitchbend = cents_to_pitch_string(floats_to_ints([exact_detune(p) + flag_detune for p in pitchbend]))
 
     new_argv = RESAMPLER + argv[1:5] + [new_flags] + argv[6:13] + [pitchbend]
     subprocess.run(new_argv)

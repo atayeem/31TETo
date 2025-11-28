@@ -23,6 +23,8 @@
 #define WRAPPED_FMOD(a, b) (fmod(fmod((a), (b)) + (b), (b))) 
 #define LERP(a, b, t) ((a) + ((b)-(a))*(t))
 
+std::ofstream logfile("/home/atayeem/brug.txt", std::ios::app);
+
 #define LV(x) dout << #x << ": " << (x) << "\n"
 
 using Path = std::filesystem::path;
@@ -657,8 +659,11 @@ int main(int argc, char *argv[]) {
 
     int given_note_cents = midi_to_cents(note_to_midi(argv[3]));
 
-    for (auto& value: pitchbend_curve)
+    for (auto& value: pitchbend_curve) {
+        logfile << value << ",";
         value = scale.distort(value + given_note_cents);
+        logfile << value << "\n";
+    }
 
     // Calculate the average pitch
     float avg = std::accumulate(pitchbend_curve.begin(), pitchbend_curve.end(), 0.0) / pitchbend_curve.size();
@@ -726,6 +731,7 @@ int main(int argc, char *argv[]) {
     dout << std::endl;
 
     dout << std::flush;
+    logfile.close();
     std::cerr << std::flush;
     #ifdef _WIN32
     _spawnvp(_P_OVERLAY, true_exec_name, const_cast<char* const*>(exec_string.data()));    
