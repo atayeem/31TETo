@@ -23,21 +23,21 @@
 #define WRAPPED_FMOD(a, b) (fmod(fmod((a), (b)) + (b), (b))) 
 #define LERP(a, b, t) ((a) + ((b)-(a))*(t))
 
-std::ofstream logfile("/home/atayeem/brug.txt", std::ios::app);
-
-#define LV(x) dout << #x << ": " << (x) << "\n"
-
 using Path = std::filesystem::path;
 using std::string;
 using std::string_view;
 using std::unordered_map;
 
-#define dout std::cout
+#define dout std::cerr
+
+static const char* name = "[31TETo] ";
 
 static int Gcentre_note = 69;
 
 static void うさげ(const char *name, const char *config_path) {
     printf(R"(%s in_file out_file pitch velocity flags offset length consonant cutoff volume modulation tempo pitchbend
+
+Welcome to 31TETo!
 
 Config file (%s):
     # config file example file
@@ -49,14 +49,22 @@ Config file (%s):
     1 "C:\5 equal divisions of 2_1 (1).tun"
 
 Flags:
+    REQUIRED: ! flag is required, and either # or ^ flag is required. Other flags are optional.
+    
     # - edo
     $ - center note (MIDI note number, default=60)
 
     ^ - .tun file index (according to config, cannot be used with # or $)
     ! - executable/resampler index (according to config)
 
-    ^ cannot be used in conjunction with # and $
-    this only supports A=440hz
+    Z - the size of one step in cents
+    z - how many steps to detune
+
+    Example: Z = 38.7 (1200/31), and z = -2, it will be pushed down by 2 steps of 31edo.
+    By default, Z is determined by the # flag, otherwise it is 0.
+
+    NOTE: ^ cannot be used in conjunction with # and $
+    NOTE: this only supports A=440hz
 )"
     , name, config_path
     );
@@ -104,6 +112,10 @@ static int note_to_midi(string note) {
         case 'G': n = 7; break;
         case 'A': n = 9; break;
         case 'B': n = 11; break;
+        default:
+            dout << name << "Invalid note given to note_to_midi()\n";
+            n = 0;
+            break;
     }
 
     // A-1
@@ -113,7 +125,7 @@ static int note_to_midi(string note) {
     }
 
     else if (s[1] == '#') {
-        
+        n += 1;
         // A#-1
         if (s[2] == '-') {
             sgn = -1;
@@ -156,8 +168,6 @@ static float midi_to_cents(int x, std::vector<float> scl={}) {
     scl.insert(scl.begin(), 0.0);
 
     x -= Gcentre_note;
-    //LV(WRAPPED_MOD(x, (int)scl.size()));
-    //LV(floor((float) x / scl.size()));
     return scl[WRAPPED_MOD(x, (int)scl.size())] + equave * floor((float) x / scl.size());
 }
 
@@ -182,7 +192,7 @@ private:
         tun_notes.resize(128);
         std::ifstream f(fname);
         if (!f) {
-            dout << "Failed to open tun file " << fname << std::endl;
+            dout << name << "Failed to open tun file " << fname << std::endl;
             return;
         }
 
@@ -197,7 +207,7 @@ private:
             }
         
         if (!pass) {
-            dout << "Couldn't find line '[Exact Tuning]' in tun file" << std::endl;
+            dout << name << "Couldn't find line '[Exact Tuning]' in tun file" << std::endl;
             return;
         }
 
@@ -219,7 +229,7 @@ private:
             if (iss >> label >> index >> equals >> val) {
                 tun_notes[index] = val;
             } else {
-                dout << "Could not parse this line of tun file: " << s << std::endl;
+                dout << name << "Could not parse this line of tun file: " << s << std::endl;
             }
         }
 
@@ -232,7 +242,7 @@ private:
     void parse_scl(Path fname) {
         std::ifstream f(fname);
         if (!f) {
-            dout << "Failed to open scl file " << fname << std::endl;
+            dout << name << "Failed to open scl file " << fname << std::endl;
             return;
         }
 
@@ -260,7 +270,7 @@ private:
             bool has_dot = contains(*p, '.');
 
             if (has_slash && has_dot) {
-                dout << "Failed to parse scl value " << *p << std::endl;
+                dout << name << "Failed to parse scl value " << *p << std::endl;
                 continue;
             }
             
@@ -314,7 +324,7 @@ public:
         }
 
         else {
-            dout << "Unsupported tuning file type, given: " << scale_path << std::endl; 
+            dout << name << "Unsupported tuning file type, given: " << scale_path << std::endl; 
         }
     }
 
@@ -349,7 +359,7 @@ public:
     Config(Path config_path) {
         std::ifstream f(config_path);
         if (!f) {
-            dout << "Failed to open file " << config_path;
+            dout << name << "Failed to open file " << config_path;
             return;
         }
         string s {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
@@ -419,6 +429,8 @@ public:
 class Flags {
 private:
     unordered_map<char, int> flags;
+    float Z_flag_increment_size = 0;
+    float Z_flag_increment_value = 0;
 
     void get_flags() {
         if (contains(flags, '#'))
@@ -432,12 +444,23 @@ private:
 
         if (contains(flags, '^'))
             tuning_file_index = flags['^'];
+
+        if (contains(flags, 'Z'))
+            Z_flag_increment_size = flags['Z'];
+        else if (edo > 0)
+            Z_flag_increment_size = 1200.0 / edo;
+
+        if (contains(flags, 'z'))
+            Z_flag_increment_value = flags['z'];
+
+        flag_detune = Z_flag_increment_size * Z_flag_increment_value;
     }
 
 public:
     int edo = -1;
     int tuning_file_index = -1;
     int resampler_index = 1;
+    float flag_detune = 0.0;
 
     Flags(const string& in) {
         int sgn = 1;
@@ -453,7 +476,7 @@ public:
                 sgn = -1;
             } else {
                 if (last_c == -1)
-                    dout << "Flag string seems to be invalid: " << in << std::endl;
+                    dout << name << "Flag string seems to be invalid: " << in << std::endl;
                 else
                     flags[last_c] = flags[last_c] * 10 + (c - '0');
             }
@@ -570,23 +593,13 @@ int main(int argc, char *argv[]) {
     }
 
     if (argc != 14) {
-        dout << "[31TETo] Incorrect number of command line arguments given. Expected 14, got " << argc << std::endl;
-        dout << "[31TETo] Command given:";
+        dout << name <<  "Incorrect number of command line arguments given. Expected 14, got " << argc << std::endl;
+        dout << name << "Command given:";
         for (int i = 0; i < argc; i++)
             dout << " " << argv[i];
         dout << std::endl;
         return 1;
     }
-
-    #ifdef DEBUG
-    // dout << "set +H; valgrind";
-    for (int i = 0; i < argc; i++) {
-        dout << " '" << argv[i] << "'";
-    }
-    dout << std::endl;
-    #endif
-
-    // resampler in_file out_file pitch velocity [flags] [offset] [length] [consonant] [cutoff] [volume] [modulation] [tempo] [pitchbend]
 
     Path config_path = argv[0];
     config_path = config_path.parent_path() / "config";
@@ -597,11 +610,11 @@ int main(int argc, char *argv[]) {
     Scale scale(12);
 
     if (flags.tuning_file_index > 0) {
-        Scale scale(config.tunings[flags.tuning_file_index]);
+        scale = Scale(config.tunings[flags.tuning_file_index]);
     } else if (flags.edo > 0) {
-        Scale scale(flags.edo);
+        scale = Scale(flags.edo);
     } else {
-        dout << "Didn't specify a tuning file or EDO" << std::endl;
+        dout << name << "Didn't specify a tuning file or EDO" << std::endl;
         return 1;
     }
 
@@ -611,9 +624,7 @@ int main(int argc, char *argv[]) {
     int given_note_cents = midi_to_cents(note_to_midi(argv[3]));
 
     for (auto& value: pitchbend_curve) {
-        logfile << value << ",";
-        value = scale.distort(value + given_note_cents);
-        logfile << value << "\n";
+        value = scale.distort(value + given_note_cents) + flags.flag_detune;
     }
 
     // Calculate the average pitch
@@ -632,11 +643,11 @@ int main(int argc, char *argv[]) {
         value -= midi_offset;
 
         if (value < -2048) {
-            dout << "Pitchbend went below limit!\n";
+            dout << name << "Pitchbend went below limit!\n";
             new_cents_s.push_back(-2048);
         }
         else if (value > 2047) {
-            dout << "Pitchbend went above limit!\n";
+            dout << name << "Pitchbend went above limit!\n";
             new_cents_s.push_back(2047);
         }
         else {
@@ -674,16 +685,16 @@ int main(int argc, char *argv[]) {
     exec_string.push_back(nullptr); // null terminator
 
 
-    dout << "EXECUTING NOW:";
+    dout << name << "EXECUTING NOW:";
     for (auto s: exec_string) {
         if (s)
             dout << " '" << s << "'";
     }
     dout << std::endl;
-
-    dout << std::flush;
-    logfile.close();
+    
+    std::cout << std::flush;
     std::cerr << std::flush;
+
     #ifdef _WIN32
     _spawnvp(_P_OVERLAY, true_exec_name, const_cast<char* const*>(exec_string.data()));    
     #else
