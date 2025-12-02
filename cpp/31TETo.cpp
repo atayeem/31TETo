@@ -32,7 +32,7 @@ using std::unordered_map;
 
 static const char* name = "[31TETo] ";
 
-static int Gcentre_note = 69;
+static int Gcentre_note = 60;
 
 static void うさげ(const char *name, const char *config_path) {
     printf(R"(%s in_file out_file pitch velocity flags offset length consonant cutoff volume modulation tempo pitchbend
@@ -50,7 +50,7 @@ Config file (%s):
 
 Flags:
     REQUIRED: ! flag is required, and either # or ^ flag is required. Other flags are optional.
-    
+
     # - edo
     $ - center note (MIDI note number, default=60)
 
@@ -81,6 +81,20 @@ static bool contains(string_view str, char c) {
 
 static bool contains(unordered_map<char, int> flags, char flag) {
     return flags.find(flag) != flags.end();
+}
+
+static bool contains(unordered_map<int, string> map, char flag) {
+    return map.find(flag) != map.end();
+}
+
+static float hat_lerp(float s, float t) {
+    float a = 5.0;
+    if (t < 0)
+        return s * a * t;
+    else if (1/a <= t && t <= 1 - 1/a)
+        return s;
+    else
+        return s*(a - a * t);
 }
 
 static constexpr auto make_b64_table() {
@@ -460,7 +474,7 @@ public:
     int edo = -1;
     int tuning_file_index = -1;
     int resampler_index = 1;
-    float flag_detune = 0.0;
+    float flag_detune;
 
     Flags(const string& in) {
         int sgn = 1;
@@ -623,8 +637,8 @@ int main(int argc, char *argv[]) {
 
     int given_note_cents = midi_to_cents(note_to_midi(argv[3]));
 
-    for (auto& value: pitchbend_curve) {
-        value = scale.distort(value + given_note_cents) + flags.flag_detune;
+    for (size_t i = 0; i < pitchbend_curve.size(); i++) {
+        pitchbend_curve[i] = scale.distort(pitchbend_curve[i] + given_note_cents) + hat_lerp(flags.flag_detune, ((float)i)/pitchbend_curve.size());
     }
 
     // Calculate the average pitch
@@ -658,7 +672,16 @@ int main(int argc, char *argv[]) {
     string new_pitch_string = cents_to_pitch_string(new_cents_s);
 
     std::vector<const char*> exec_string;
-    const char* exec_name = config.executables[flags.resampler_index].c_str();
+    const char* exec_name;
+
+    if (!contains(config.executables, flags.resampler_index)) {
+        dout << name << "Resampler index ! is invalid! Check the config file: " << config_path << " for the number !" << flags.resampler_index << "\n";
+        return 1;
+    }
+    else {
+        exec_name = config.executables[flags.resampler_index].c_str();
+    }
+
     const char* true_exec_name = exec_name;
 
     #ifndef _WIN32
