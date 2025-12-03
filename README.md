@@ -1,7 +1,8 @@
 # 31TETo
-A hacky way to add support for microtones to UTAU/OpenUTAU.
+A hacky way to add support for microtones to UTAU/OpenUTAU. If your project already works with microtau, it requires no additional setup for this to work.
 
-Config file (it's in the resamplers folder):
+```
+Config file (it's in the resamplers folder, it's just called 'config'):
     # config file example file
     # Format: <index/number> <path>
     # Paths can be absolute or relative to the config file
@@ -27,3 +28,4 @@ Flags:
 
     NOTE: ^ cannot be used in conjunction with # and $
     NOTE: this only supports A=440hz
+```
