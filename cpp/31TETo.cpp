@@ -370,74 +370,65 @@ public:
     unordered_map<int, string> executables;
     unordered_map<int, string> tunings;
 
-    Config(Path config_path) {
-        std::ifstream f(config_path);
-        if (!f) {
-            dout << name << "Failed to open file " << config_path;
-            return;
+    void print_received() {
+        dout << name << "Got these executables:";
+        for (auto [a, b]: executables)
+            dout << " (" << a << ": " << b << ")";
+        dout << "\n";
+
+        dout << name << "Got these tunings:";
+        for (auto [a, b]: tunings)
+            dout << " (" << a << ": " << b << ")";
+        dout << "\n";
+    }
+
+    Config(const Path& configPath) {
+    std::ifstream file(configPath);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open config file: " << configPath << "\n";
+        return;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        // Remove leading/trailing whitespace
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+
+        // Skip empty lines or comments
+        if (line.empty() || line[0] == '#') continue;
+
+        bool isExecutable = false;
+        if (line[0] == '!') {
+            isExecutable = true;
+            line.erase(0, 1); // Remove the '!' character
+            line.erase(0, line.find_first_not_of(" \t")); // Trim again
         }
-        string s {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
-        f.close();
 
-        int state = 1;
-        int idx = 0;
-        bool exclaimed = false;
-        string fname;
-        
-        for (char c: s) switch (state) {
-            case 1:
-                if (c == '#')
-                    state = 2;
-                if (c == '!') {
-                    exclaimed = true;
-                    state = 3;
-                }
-                if ('0' <= c && c <= '9') {
-                    idx = c - '0';
-                    state = 3;
-                }
-                break;
-            
-            case 2:
-                if (c == '\n')
-                    state = 1;
-                break;
-            
-            case 3:
-                if ('0' <= c && c <= '9')
-                    idx = idx * 10 + c - '0';
-                if (c == ' ')
-                    state = 4;
-                break;
-            
-            case 4:
-                if (c == '"') {
-                    state = 8;
-                }
-                else if (c == '\n') {
-                    if (exclaimed)
-                        executables[idx] = fname;
-                    else
-                        tunings[idx] = fname;
+        std::istringstream iss(line);
+        int index;
+        if (!(iss >> index)) continue; // Invalid line
 
-                    exclaimed = false;
-                    idx = 0;
-                    fname = "";
-                    state = 1;
-                }
-                else {
-                    fname += c;
-                }
-                break;
-            
-            case 8:
-                if (c == '"')
-                    state = 4;
-                else
-                    fname += c;
-                break;
+        std::string pathStr;
+        std::getline(iss, pathStr); // Read rest of line as path
+        pathStr.erase(0, pathStr.find_first_not_of(" \t\"")); // Trim leading whitespace/quotes
+        pathStr.erase(pathStr.find_last_not_of(" \t\"") + 1); // Trim trailing whitespace/quotes
+
+        // Resolve relative paths
+        Path fullPath = pathStr;
+        if (!fullPath.is_absolute()) {
+            fullPath = configPath.parent_path() / fullPath;
+        }
+
+        if (isExecutable) {
+            executables[index] = fullPath.string();
+        } else {
+            tunings[index] = fullPath.string();
         }
     }
+
+    print_received();
+}
 };
 
 class Flags {
@@ -707,7 +698,6 @@ int main(int argc, char *argv[]) {
     exec_string.push_back(new_pitch_string.c_str()); // pitchbend
     exec_string.push_back(nullptr); // null terminator
 
-
     dout << name << "EXECUTING NOW:";
     for (auto s: exec_string) {
         if (s)
@@ -719,8 +709,10 @@ int main(int argc, char *argv[]) {
     std::cerr << std::flush;
 
     #ifdef _WIN32
-    _spawnvp(_P_OVERLAY, true_exec_name, const_cast<char* const*>(exec_string.data()));    
+    _spawnvp(_P_WAIT, true_exec_name, const_cast<char* const*>(exec_string.data()));    
     #else
     execvp(true_exec_name, const_cast<char* const*>(exec_string.data()));
     #endif
+
+    return 0;
 }
