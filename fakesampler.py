@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import sys, subprocess, os
 
 WORKING_DIR = os.path.dirname(sys.argv[0])

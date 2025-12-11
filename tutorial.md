@@ -1,7 +1,7 @@
 # How to use 31TETo in OpenUTAU
 
 ## First, an example
-
+Check the assets folder for an example .ustx file.
 
 ## What does 31TETo do?
 It remaps the scale in the editor to the notes of whatever scale you specify, in a direct way that can seem weird at first. For example, if I set the # flag to 24, it will have this behavior:
