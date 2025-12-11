@@ -1,5 +1,8 @@
 # How to use 31TETo in OpenUTAU
 
+## First, an example
+
+
 ## What does 31TETo do?
 It remaps the scale in the editor to the notes of whatever scale you specify, in a direct way that can seem weird at first. For example, if I set the # flag to 24, it will have this behavior:
 ```
@@ -19,17 +22,17 @@ At the bottom you will see this section. Click on the gear icon.  \
 <img width="1031" height="292" alt="image" src="https://github.com/user-attachments/assets/0395b29d-1cbe-419a-b3c9-f7d30c02d8af" />\
 Click on any of these. In OpenUTAU these are called expressions. Some of them are also resampler flags.  \
 <img width="595" height="413" alt="image" src="https://github.com/user-attachments/assets/4901c08a-a861-4c51-9767-baa422c9d826" />\
-It is a resampler flag if there is a letter where it says "Resampler flag", in this case the letter is 'B'.  \
+It is a resampler flag if there is a letter where it says "Resampler flag", in this case the letter is 'B'.  
 
 What this means is that this value will be given to the resampler.  \
 <img width="374" height="416" alt="image" src="https://github.com/user-attachments/assets/58da762a-e509-4166-8fe3-e227c0012b2b" />\
-As you can see, the bottom area can be used to set this value for each note.  \
+As you can see, the bottom area can be used to set this value for each note.  
 
 Usually, these will be used for normal singing things, like voicing and gender, but 31TETo uses them to change its microtonal retuning.
 
 ### Add a flag
 Click the plus button here:  \
-<img width="187" height="201" alt="image" src="https://github.com/user-attachments/assets/24257e16-3bf5-4b39-84fd-884cf12d9e6c" />\
+<img width="187" height="201" alt="image" src="https://github.com/user-attachments/assets/24257e16-3bf5-4b39-84fd-884cf12d9e6c" />
 
 This will open a menu like this:  \
 <img width="441" height="179" alt="Executable" src="https://github.com/user-attachments/assets/995343c6-9af9-4632-aa99-fe5fd7517796" />\
@@ -46,8 +49,8 @@ You never need to use this. Unless you know why you need it.  \
 ## Instructions
 
 1. Find the Resamplers folder. Here's one way to do it,  
-<img width="382" height="138" alt="image" src="https://github.com/user-attachments/assets/92024120-2eb3-452c-979a-1f2107895f9d" />
-Click here, and go back one, and open the Resamplers folder.
+<img width="382" height="138" alt="image" src="https://github.com/user-attachments/assets/92024120-2eb3-452c-979a-1f2107895f9d" /> \
+Click on 'Open Logs Location', and go back one folder, then open the Resamplers folder.
 
 2. Start by writing your config file. The config file should be called 'config' and it is in the Resamplers folder. You'll have to make a new file called 'config', not 'config.txt'.
 3. Here's an example of a valid config file:
@@ -83,7 +86,7 @@ Flags:
     NOTE: ^ cannot be used in conjunction with # and $
     NOTE: this only supports A=440hz
 ```
-[See here](#add-a-flag) for information on how to do this. Remember that the name and short name for them doesn't matter. Choose anything. The only thing that matters is the default value and the resampler flag. \
+Go to the previous section for information on how to do this. Remember that the name and short name for them doesn't matter. Choose anything. The only thing that matters is the default value and the resampler flag. \
 
 The key point is that ^ has to be set to a valid tuning file in your config file, based on the number you wrote. Same thing with !, except for numbers with exclamation marks before them.
 
